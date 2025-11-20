@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Product Importer</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <h1>Product Importer</h1>
+
+  <section id="upload">
+    <h2>Upload CSV</h2>
+    <input type="file" id="fileInput" accept=".csv"/>
+    <button id="uploadBtn">Upload</button>
+    <div id="uploadStatus"></div>
+    <progress id="progressBar" max="100" value="0" style="width: 100%; display:none;"></progress>
+    <pre id="eventsLog"></pre>
+  </section>
+
+  <section id="products">
+  <h2>Products</h2>
+  <div id="filters">
+    <input placeholder="SKU" id="filterSku"/>
+    <input placeholder="Name" id="filterName"/>
+    <input placeholder="Description" id="filterDescription"/>
+    <select id="filterActive">
+      <option value="">Any</option>
+      <option value="true">Active</option>
+      <option value="false">Inactive</option>
+    </select>
+    <button id="refresh">Refresh</button>
+    <button id="addProductBtn">Add Product</button>
+  </div>
+
+  <table id="productsTable" border="1" width="100%">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>SKU</th>
+        <th>Name</th>
+        <th>Description</th>
+        <th>Active</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="productsTableBody"></tbody>
+  </table>
+
+  <div id="pagination">
+    <button id="prevPage">Prev</button>
+    <span id="pageInfo"></span>
+    <button id="nextPage">Next</button>
+  </div>
+  </section>
+
+  <div id="productModal" class="modal">
+    <div class="modal-content">
+        <h3 id="modalTitle">Add Product</h3>
+        <input id="modalSku" placeholder="SKU"/><br/>
+        <input id="modalName" placeholder="Name"/><br/>
+        <input id="modalDescription" placeholder="Description"/><br/>
+        <label>Active <input type="checkbox" id="modalActive"/></label><br/>
+        <button id="saveProductBtn">Save</button>
+        <button id="cancelModalBtn">Cancel</button>
+    </div>
+  </div>
+  <button id="deleteAllBtn" onclick="deleteAllProducts()">
+    Delete All Products
+  </button>
+  
+  <section id="webhooks">
+    <h2>Manage Webhooks</h2>
+
+    <form id="webhookForm">
+      <input type="hidden" id="webhookId">
+      URL: <input type="url" id="webhookUrl" required>
+      Event Type: 
+      <select id="webhookEvent">
+        <option value="product.created">product.created</option>
+        <option value="product.updated">product.updated</option>
+        <option value="product.deleted">product.deleted</option>
+        <option value="import.finished">import.finished</option>
+      </select>
+      Enabled: <input type="checkbox" id="webhookEnabled" checked>
+      <button type="submit">Save</button>
+    </form>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>URL</th>
+          <th>Event Type</th>
+          <th>Enabled</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="webhookTableBody"></tbody>
+    </table>
+  </section>
+
+<script src="/app.js"></script>
+</body>
+</html>

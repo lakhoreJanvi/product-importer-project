@@ -1,0 +1,74 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:15
+    container_name: product_import_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    container_name: product_import_redis
+    ports:
+      - "6379:6379"
+
+  web:
+    build: .
+    container_name: product_import_web
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./:/usr/src/app
+      - uploads:/app/uploads     
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - UVICORN_BACKLOG=1
+    tty: true
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file: .env
+
+  worker:
+    build: .
+    container_name: product_import_worker
+    command: celery -A app.celery_app.celery worker -Q import_queue --loglevel=INFO --concurrency=2
+    volumes:
+      - ./:/usr/src/app
+      - uploads:/app/uploads     
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file: .env
+
+  beat:
+    build: .
+    container_name: product_import_beat
+    command: celery -A app.celery_app.celery beat --loglevel=INFO
+    volumes:
+      - ./:/usr/src/app
+    depends_on:
+      - db
+      - redis
+    env_file: .env
+
+volumes:
+  pgdata:
+  uploads:
