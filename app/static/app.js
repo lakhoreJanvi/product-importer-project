@@ -5,64 +5,103 @@ const progressBar = document.getElementById("progressBar");
 const eventsLog = document.getElementById("eventsLog");
 
 uploadBtn.onclick = async () => {
-  if (!fileInput.files.length) return alert("Choose CSV");
+  if (!fileInput.files.length) return alert("Choose a CSV file");
   const file = fileInput.files[0];
-  const fd = new FormData();
-  fd.append("file", file, file.name);
-  statusDiv.innerText = "Uploading...";
-  const r = await fetch("/upload/", {method: "POST", body: fd});
-  const j = await r.json();
-  if (!j.job_id) {
-    statusDiv.innerText = "Upload failed";
-    return;
-  }
-  statusDiv.innerText = "Upload complete — starting import. Job id: " + j.job_id;
+
+  statusDiv.innerText = "Preparing upload...";
+  statusDiv.style.color = "black";
   progressBar.style.display = "block";
   progressBar.value = 0;
-  statusDiv.innerText = "Parsing CSV…";
-
-  const es = new EventSource(`/events/import/${j.job_id}`);
+  
+  const CHUNK_SIZE = 5 * 1024 * 1024;
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  const uploadId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+  
+  try {
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const start = chunkIndex * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunk = file.slice(start, end);
+      
+      const formData = new FormData();
+      formData.append('chunk', chunk);
+      formData.append('chunkIndex', chunkIndex.toString());
+      formData.append('totalChunks', totalChunks.toString());
+      formData.append('uploadId', uploadId);
+      formData.append('filename', file.name);
+      
+      const response = await fetch("/upload/chunk", {
+        method: "POST",
+        body: formData
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Chunk ${chunkIndex + 1} upload failed`);
+      }
+      
+      const progress = Math.floor(((chunkIndex + 1) / totalChunks) * 100);
+      progressBar.value = progress;
+      statusDiv.innerText = `Uploading... ${progress}% (${chunkIndex + 1}/${totalChunks} chunks)`;
+    }
+    
+    statusDiv.innerText = "Upload complete, processing...";
+    
+    const finalizeResponse = await fetch("/upload/finalize", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({uploadId: uploadId, filename: file.name})
+    });
+    
+    if (!finalizeResponse.ok) {
+      throw new Error("Failed to finalize upload");
+    }
+    
+    const result = await finalizeResponse.json();
+    
+    statusDiv.innerText = "Processing started. Job ID: " + result.job_id;
+    progressBar.value = 0;
+    
+    const es = new EventSource(`/events/import/${result.job_id}`);
+    
     es.onmessage = (evt) => {
-    const data = JSON.parse(evt.data);
-
-    eventsLog.innerText += JSON.stringify(data) + "\n";
-
-    if (data.status === "parsing") {
-        statusDiv.innerText = "Parsing CSV…";
-        progressBar.value = 0;
-    } else if (data.status === "importing") {
-        const pct = data.total ? Math.floor((data.processed / data.total) * 100) : 0;
+      if (!evt.data.trim()) return;
+      const d = JSON.parse(evt.data);
+      
+      eventsLog.innerText += JSON.stringify(d) + "\n";
+      
+      if (d.status === "importing") {
+        const pct = d.total ? Math.floor((d.processed / d.total) * 100) : 0;
         progressBar.value = pct;
-        statusDiv.innerText = `Importing… ${pct}% (${data.processed}/${data.total})`;
-    } else if (data.status === "validating") {
-        statusDiv.innerText = "Validating data…";
-    } else if (data.status === "completed") {
+        statusDiv.innerText = `Importing... ${pct}% (${d.processed}/${d.total})`;
+      } 
+      else if (d.status === "completed") {
         statusDiv.innerText = "Import Complete!";
+        statusDiv.style.color = "green";
         progressBar.value = 100;
         es.close();
-    } else if (data.status === "failed") {
-        statusDiv.innerText = "Import Failed: " + (data.error || "");
+        loadProducts();
+      }
+      else if (d.status === "failed") {
+        statusDiv.innerText = "Import Failed: " + (d.error || "");
         statusDiv.style.color = "red";
         es.close();
-    }
-};
+      }
+    };
+    
+    es.onerror = (evt) => {
+      console.error("SSE connection lost", evt);
+    };
+    
+  } catch (err) {
+    console.error(err);
+    statusDiv.innerText = "Upload failed: " + err.message;
+    statusDiv.style.color = "red";
+    progressBar.style.display = "block";
+  }
 };
 
 let currentPage = 1;
 let currentLimit = 10;
-document.querySelector("#productsTable tbody").addEventListener("click", async (e) => {
-  const target = e.target;
-
-  if (target.matches("button.editBtn")) {
-    const id = target.dataset.id;
-    openModal(id);
-  }
-
-  if (target.matches("button.deleteBtn")) {
-    if (!confirm("Delete?")) return;
-    fetch(`/products/${target.dataset.id}`, { method: "DELETE" }).then(loadProducts);
-  }
-});
 
 async function loadProducts() {
   const sku = document.getElementById("filterSku").value;
@@ -100,6 +139,30 @@ async function loadProducts() {
 
   document.getElementById("pageInfo").innerText = `Page ${data.page} / ${Math.ceil(data.total / currentLimit)}`;
 }
+
+document.querySelector("#productsTable tbody").addEventListener("click", async (e) => {
+  const target = e.target;
+  
+  // Handle Edit button
+  if (target.classList.contains("editBtn")) {
+    const productId = parseInt(target.dataset.id);
+    openModal(productId);
+  }
+  
+  // Handle Delete button
+  if (target.classList.contains("deleteBtn")) {
+    const productId = parseInt(target.dataset.id);
+    if (!confirm("Delete this product?")) return;
+    
+    try {
+      await fetch(`/products/${productId}`, { method: "DELETE" });
+      loadProducts();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to delete product");
+    }
+  }
+});
 
 document.getElementById("prevPage").onclick = () => { if(currentPage>1){currentPage--; loadProducts();} };
 document.getElementById("nextPage").onclick = () => { currentPage++; loadProducts(); };

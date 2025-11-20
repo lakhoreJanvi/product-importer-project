@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, ConfigDict
 from typing import Optional
 
 class ProductCreate(BaseModel):
@@ -33,5 +33,5 @@ class WebhookRead(WebhookBase):
 
 class WebhookOut(WebhookBase):
     id: int
-    class Config:
-        orm_mode = True
+
+    model_config = ConfigDict(from_attributes=True)

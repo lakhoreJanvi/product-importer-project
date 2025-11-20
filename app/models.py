@@ -1,9 +1,30 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, func, Index
+from sqlalchemy import Column, Integer, String, Float, Boolean, Text, DateTime, LargeBinary
 from sqlalchemy.sql import expression
+from sqlalchemy.sql import func
 from .database import Base
 from sqlalchemy.dialects.postgresql import JSONB
 import datetime
 from sqlalchemy import UniqueConstraint
+
+class ImportJob(Base):
+    __tablename__ = "import_jobs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(50), default="pending")
+    total_rows = Column(Integer, default=0)
+    processed_rows = Column(Integer, default=0)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+class TempFile(Base):
+    __tablename__ = "temp_files"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255), nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    chunk_data = Column(LargeBinary, nullable=False)  # Stores file chunks
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Product(Base):
     __tablename__ = "products"
@@ -29,13 +50,3 @@ class Webhook(Base):
     url = Column(String(2048), nullable=False)
     event_type = Column(String(128), nullable=False)
     enabled = Column(Boolean, default=True)
-
-class ImportJob(Base):
-    __tablename__ = "import_jobs"
-    id = Column(Integer, primary_key=True, index=True)
-    total_rows = Column(Integer, default=0)
-    processed_rows = Column(Integer, default=0)
-    status = Column(String(64), default="pending") 
-    error = Column(Text, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, onupdate=func.now(), server_default=func.now())

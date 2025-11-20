@@ -8,6 +8,7 @@ __pycache__/
 venv/
 env/
 .env
+nvm.zip
 
 # Alembic
 alembic/versions/*.pyc

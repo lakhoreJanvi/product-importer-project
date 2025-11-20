@@ -1,44 +1,48 @@
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-import redis
-import os
-from dotenv import load_dotenv
-load_dotenv()
+import json, asyncio
+from app.database import SessionLocal
+from app.models import ImportJob
 
-REDIS_URL = os.getenv("REDIS_URL")
-r = redis.from_url(REDIS_URL)
+router = APIRouter()  
 
-router = APIRouter(prefix="/events", tags=["events"])
+@router.get("/events/import/{job_id}")
+async def import_events(job_id: int):
 
-def event_stream(job_id: int):
-    pubsub = r.pubsub(ignore_subscribe_messages=True)
+    async def event_stream():
+        while True:
+            db = SessionLocal()
+            job = db.query(ImportJob).get(job_id)
+            db.close()
 
-    channel = f"import:progress:{job_id}"
-    pubsub.subscribe(channel)
+            if not job:
+                # Send error event
+                yield "data: " + json.dumps({
+                    "status": "failed",
+                    "error": "Job not found"
+                }) + "\n\n"
+                break
 
-    try:
-        for message in pubsub.listen():
-            if message["type"] != "message":
-                continue
+            payload = {
+                "status": job.status,
+                "processed": job.processed_rows,
+                "total": job.total_rows,
+                "error": job.error,
+            }
 
-            data = message["data"].decode("utf-8")
-            if isinstance(data, bytes):
-                data = data.decode()
+            yield f"data: {json.dumps(payload)}\n\n"
 
-            yield f"data: {data}\n\n"
-            yield ": heartbeat\n\n" 
-    finally:
-        pubsub.close()
+            if job.status in ("completed", "failed"):
+                break
 
-@router.get("/import/{job_id}")
-def import_events(job_id: int):
+            await asyncio.sleep(1)
+
     return StreamingResponse(
-        event_stream(job_id),
+        event_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Transfer-Encoding": "chunked",
-            "X-Accel-Buffering": "no",
+            "X-Accel-Buffering": "no"
         }
     )
