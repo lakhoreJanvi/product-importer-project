@@ -5,64 +5,117 @@ const progressBar = document.getElementById("progressBar");
 const eventsLog = document.getElementById("eventsLog");
 
 uploadBtn.onclick = async () => {
-  if (!fileInput.files.length) return alert("Choose CSV");
+  if (!fileInput.files.length) return alert("Choose a CSV file");
   const file = fileInput.files[0];
-  const fd = new FormData();
-  fd.append("file", file, file.name);
-  statusDiv.innerText = "Uploading...";
-  const r = await fetch("/upload/", {method: "POST", body: fd});
-  const j = await r.json();
-  if (!j.job_id) {
-    statusDiv.innerText = "Upload failed";
-    return;
-  }
-  statusDiv.innerText = "Upload complete — starting import. Job id: " + j.job_id;
-  progressBar.style.display = "block";
-  progressBar.value = 0;
-  statusDiv.innerText = "Parsing CSV…";
 
-  const es = new EventSource(`/events/import/${j.job_id}`);
+  statusDiv.innerText = "Requesting signed URL…";
+  statusDiv.style.color = "black";
+
+  try {
+    // 1) Request signed URL
+    const res = await fetch("/upload/signed-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name })
+    });
+    if (!res.ok) throw new Error("Failed to get signed URL");
+    const data = await res.json(); // { upload_url, public_url, filename }
+
+    // 2) Upload directly to Supabase signed URL
+    statusDiv.innerText = "Uploading file to Supabase…";
+    await uploadFileToSignedUrl(file, data.upload_url);
+    statusDiv.innerText = "Upload complete — starting import…";
+
+    // 3) Trigger CSV processing
+    const processRes = await fetch("/upload/process-csv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: data.filename, public_url: data.public_url })
+    });
+    if (!processRes.ok) throw new Error("Failed to start CSV processing");
+    const processData = await processRes.json(); // { job_id }
+
+    statusDiv.innerText = "Import started. Job ID: " + processData.job_id;
+    progressBar.style.display = "block";
+    progressBar.value = 0;
+
+    // 4) Listen to SSE for progress updates
+    const es = new EventSource(`/events/import/${processData.job_id}`);
     es.onmessage = (evt) => {
-    const data = JSON.parse(evt.data);
+      try {
+        const d = JSON.parse(evt.data);
+        // append raw event to log (optional)
+        eventsLog.innerText += JSON.stringify(d) + "\n";
 
-    eventsLog.innerText += JSON.stringify(data) + "\n";
+        // update UI based on status
+        switch (d.status) {
+          case "parsing":
+            statusDiv.innerText = "Parsing CSV…";
+            progressBar.value = 0;
+            break;
+          case "importing":
+            const pct = d.total ? Math.floor((d.processed / d.total) * 100) : 0;
+            progressBar.value = pct;
+            statusDiv.innerText = `Importing… ${pct}% (${d.processed}/${d.total})`;
+            break;
+          case "validating":
+            statusDiv.innerText = "Validating data…";
+            break;
+          case "completed":
+            statusDiv.innerText = "Import Complete!";
+            progressBar.value = 100;
+            es.close();
+            break;
+          case "failed":
+            statusDiv.innerText = "Import Failed: " + (d.error || "");
+            statusDiv.style.color = "red";
+            es.close();
+            break;
+        }
+      } catch (e) {
+        console.error("Malformed SSE payload", e);
+      }
+    };
+    es.onerror = (err) => {
+      console.error("SSE error", err);
+      // optionally show a message but don't spam user
+    };
 
-    if (data.status === "parsing") {
-        statusDiv.innerText = "Parsing CSV…";
-        progressBar.value = 0;
-    } else if (data.status === "importing") {
-        const pct = data.total ? Math.floor((data.processed / data.total) * 100) : 0;
+  } catch (err) {
+    console.error(err);
+    statusDiv.innerText = "Upload failed: " + err.message;
+    statusDiv.style.color = "red";
+    progressBar.style.display = "none";
+  }
+};
+
+// Upload helper: simple PUT with fetch for Supabase signed URL
+async function uploadFileToSignedUrl(file, signedUrl) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", signedUrl);
+    xhr.setRequestHeader("Content-Type", "text/csv"); // only this header!
+
+    xhr.upload.onprogress = evt => {
+      if (evt.lengthComputable) {
+        const pct = Math.floor((evt.loaded / evt.total) * 100);
         progressBar.value = pct;
-        statusDiv.innerText = `Importing… ${pct}% (${data.processed}/${data.total})`;
-    } else if (data.status === "validating") {
-        statusDiv.innerText = "Validating data…";
-    } else if (data.status === "completed") {
-        statusDiv.innerText = "Import Complete!";
-        progressBar.value = 100;
-        es.close();
-    } else if (data.status === "failed") {
-        statusDiv.innerText = "Import Failed: " + (data.error || "");
-        statusDiv.style.color = "red";
-        es.close();
-    }
-};
-};
+        statusDiv.innerText = `Uploading… ${pct}%`;
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`Upload failed with status ${xhr.status}`));
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+
+    xhr.send(file);
+  });
+}
 
 let currentPage = 1;
 let currentLimit = 10;
-document.querySelector("#productsTable tbody").addEventListener("click", async (e) => {
-  const target = e.target;
-
-  if (target.matches("button.editBtn")) {
-    const id = target.dataset.id;
-    openModal(id);
-  }
-
-  if (target.matches("button.deleteBtn")) {
-    if (!confirm("Delete?")) return;
-    fetch(`/products/${target.dataset.id}`, { method: "DELETE" }).then(loadProducts);
-  }
-});
 
 async function loadProducts() {
   const sku = document.getElementById("filterSku").value;
